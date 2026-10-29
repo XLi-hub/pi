@@ -30,17 +30,45 @@ function pathSuffix(pathname: string): string {
 	return pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
 }
 
-function field(header: string, name: string): string | undefined {
-	const match = header.match(new RegExp(String.raw`(?:^|[,\s])${name}=(?:"([^"]*)"|([^\s,]+))`, "i"));
-	// An empty value (`scope=""`) carries no information, so it counts as absent.
-	return match?.[1] || match?.[2] || undefined;
-}
-
 export function parseWwwAuthenticate(header: string | null): OAuthChallenge {
 	if (!header) return {};
-	const scheme = header.trimStart().split(/\s+/, 1)[0]?.toLowerCase();
-	if (scheme !== "bearer" && scheme !== "dpop") return {};
-	const resourceMetadata = field(header, "resource_metadata");
+	// Commas delimit both challenges and parameters, except inside quoted strings (RFC 9110).
+	const parts: string[] = [];
+	let start = 0;
+	let quoted = false;
+	for (let index = 0; index < header.length; index++) {
+		const char = header[index];
+		if (quoted && char === "\\") index++;
+		else if (char === '"') quoted = !quoted;
+		else if (char === "," && !quoted) {
+			parts.push(header.slice(start, index).trim());
+			start = index + 1;
+		}
+	}
+	parts.push(header.slice(start).trim());
+
+	let fields: Map<string, string> | undefined;
+	for (const part of parts) {
+		if (!part) continue;
+		const challenge = part.match(/^([!#$%&'*+.^_`|~\w-]+)(?:[ \t]+([\s\S]*))?$/);
+		let parameter = part;
+		if (challenge && !challenge[2]?.trimStart().startsWith("=")) {
+			if (fields) break;
+			const scheme = challenge[1].toLowerCase();
+			if (scheme !== "bearer" && scheme !== "dpop") continue;
+			fields = new Map();
+			parameter = challenge[2] ?? "";
+		}
+		if (!fields) continue;
+		const match = parameter.match(
+			/^([!#$%&'*+.^_`|~\w-]+)[ \t]*=[ \t]*(?:"((?:[^"\\]|\\.)*)"|([!#$%&'*+.^_`|~\w-]+))[ \t]*$/,
+		);
+		if (!match) continue;
+		const name = match[1].toLowerCase();
+		if (!fields.has(name)) fields.set(name, match[2] === undefined ? match[3] : match[2].replace(/\\(.)/g, "$1"));
+	}
+	if (!fields) return {};
+	const resourceMetadata = fields.get("resource_metadata");
 	let resourceMetadataUrl: URL | undefined;
 	if (resourceMetadata) {
 		try {
@@ -49,9 +77,10 @@ export function parseWwwAuthenticate(header: string | null): OAuthChallenge {
 	}
 	return {
 		resourceMetadataUrl,
-		scope: field(header, "scope"),
-		error: field(header, "error"),
-		errorDescription: field(header, "error_description"),
+		// Empty values carry no information, so they count as absent.
+		scope: fields.get("scope") || undefined,
+		error: fields.get("error") || undefined,
+		errorDescription: fields.get("error_description") || undefined,
 	};
 }
 

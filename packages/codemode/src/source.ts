@@ -7,6 +7,7 @@
  * text(JSON.parse(text).name);
  * ```
  */
+import jsTokens from "js-tokens";
 
 export const CODEMODE_OPTIONS_PREFIX = "// @options:";
 
@@ -109,9 +110,21 @@ export function parseCodemodeSource(input: string): ParsedCodemodeSource {
 		(line, index) => index > 0 && line.trimStart().startsWith(CODEMODE_OPTIONS_PREFIX),
 	);
 	if (misplaced !== -1) {
-		throw new CodemodeSourceError(
-			`The ${CODEMODE_OPTIONS_PREFIX} line must be the first line of the input; found one on line ${misplaced + 1}`,
-		);
+		// A raw line can also occur inside a template, continued string, or block comment.
+		// Tokenize only when there is a candidate, and reject actual standalone line comments.
+		let offset = 0;
+		for (const token of jsTokens(input)) {
+			if (token.type === "SingleLineComment" && token.value.startsWith(CODEMODE_OPTIONS_PREFIX)) {
+				const lineStart = input.lastIndexOf("\n", offset - 1) + 1;
+				if (lineStart > 0 && input.slice(lineStart, offset).trim() === "") {
+					const line = input.slice(0, offset).split("\n").length;
+					throw new CodemodeSourceError(
+						`The ${CODEMODE_OPTIONS_PREFIX} line must be the first line of the input; found one on line ${line}`,
+					);
+				}
+			}
+			offset += token.value.length;
+		}
 	}
 	const newline = input.indexOf("\n");
 	const firstLine = lines[0].replace(/\r$/, "");

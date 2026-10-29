@@ -29,6 +29,26 @@ describe("parseCodemodeSource", () => {
 		expect(parseCodemodeSource('text("// @options: {}")').options).toEqual({});
 	});
 
+	it.each([
+		'const snippet = `\n// @options: {"timeout_ms": 1}\ntext(1);\n`; text(snippet);',
+		"/* documentation:\n// @options: {}\n*/\ntext(1);",
+		`const snippet = \`before \${1}\n// @options: {}\nafter\`; text(snippet);`,
+		`const snippet = \`outer \${\`nested\n// @options: {}\n\`}\n// @options: {}\n\`; text(snippet);`,
+		"const snippet = `escaped \\`\n// @options: {}\n`; text(snippet);",
+		'const snippet = "continued\\\n// @options: {}"; text(snippet);',
+		"const pattern = /`/; const snippet = `\n// @options: {}\n`; text(snippet);",
+	])("preserves directive examples in literals and block comments: %s", (input) => {
+		expect(parseCodemodeSource(input)).toEqual({ code: input, options: {} });
+	});
+
+	it("parses a leading directive while preserving directive examples in its body", () => {
+		const body = '\ntext(`\n// @options: {"timeout_ms": 1}\n`);';
+		expect(parseCodemodeSource(`// @options: {"timeout_ms": 1000}${body}`)).toEqual({
+			code: body,
+			options: { timeoutMs: 1000 },
+		});
+	});
+
 	// #10631: an options line after the first line used to be ignored, so its timeout never applied.
 	it("rejects an options line that is not the first line", () => {
 		const cases: [string, number][] = [
@@ -36,6 +56,10 @@ describe("parseCodemodeSource", () => {
 			['\n  // @options: {"timeout_ms": 1000}\nwhile (true) {}', 2],
 			['text(1)\r\n// @options: {"timeout_ms": 1}', 2],
 			['// @options: {"timeout_ms": 1}\ntext(1)\n// @options: {"timeout_ms": 2}', 3],
+			["text(`example\n// @options: {}\n`);\n// @options: {}\ntext(1);", 4],
+			[`text(\`\${\n// @options: {}\n1}\`);`, 2],
+			["text(/`/);\n// @options: {}\ntext(1);", 2],
+			["/* example\n// @options: {}\n*/\n  // @options: {}\ntext(1);", 4],
 		];
 		for (const [input, line] of cases) {
 			expect(() => parseCodemodeSource(input), input).toThrow(CodemodeSourceError);

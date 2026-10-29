@@ -67,6 +67,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
+		"js-tokens": "10.0.0",
 		"quickjs-wasi": "3.6.2"
 	},
 	"devDependencies": {
